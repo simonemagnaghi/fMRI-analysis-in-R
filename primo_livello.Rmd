@@ -1,0 +1,130 @@
+---
+title: "package_fmri"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+
+
+
+
+SINGLE SUBJECT
+
+#descrizione esperimento
+
+Utilizzando il pacchetto 'fmri', iniziamo a leggere le 96 immagini in formato '.hdr' con la funzione 'read.ANALYZE'. Otteniamo un oggetto di classe 'fmri' di dimensioni 64x64x64x96, da cui possiamo estarre i dati per la prima slice tramite la funzione 'extract.data', specificando il valore della quarta dimensione. Con il summary, otteniamo informazioni riguardanti le dimensioni del singolo voxel (3x3x3 mm).
+
+```{r setup, include=TRUE}
+library('fmri')
+ds <- read.ANALYZE('C:/Users/symo9/Desktop/stage interno/fM00223/fM00223_',TRUE,'',4,96)
+summary(ds)
+anatomic <- extract.data(ds)[, , , 1]
+dim(anatomic)
+```
+
+Una volta estratti i dati relativi alle 96 osservazioni, cerchiamo di rappresentare graficamente la HRF (hemodynamic response function). La funzione 'fmri.stimulus()' crea la BOLD (blood oxygenation level dependent) response. I parametri all'interno della funzione sono:
+
+- scans: il numero di scan
+- onsets: un vettore di numeri che identificano l'inizio dello stimolo 
+- durations: la durata dello stimolo
+- TR: time repetition, ossia il tempo che intercorre tra due scan 
+
+La BOLD response $x(t)$ è il risulato della convoluzione del HRF (hemodynamic response function) $h(t)$ e della serie storica dello stimolo $v(t)$: 
+$$x(t)=(v*h)(t)$$
+Otteniamo un vettore di lunghezza 96, che raffiguriamo in un semplice plot, in cui si possono notare i ripetuti picchi dovuti all'inizio dello stimolo e le conseguenti ricadute.
+
+```{r, include=TRUE}
+hrf <- fmri.stimulus(scans=96, onsets=(0:7) * 12 + 7, durations=6, TR=7, type='canonical', verbose=T)
+length(hrf)
+plot(hrf, type='l', xlab='Scans', ylab='BOLD response')
+```
+
+Con la funzione 'fmri.design()', costruiamo la matrice del disegno X a partire dal vettore della BOLD response precedentemente creato. 'order' è l'ordine del trend polinomiale. L matrice avrà dimensioni Tx(p+order), in cui T=scan e p è il numero di hrf create. In questo caso, decido di aggiungere due termini per il trend polinomiale. La prima colonna di X non è altro che il vettore 'bold', mentre la seconda colonna è l'intercetta. La terza e la quarta colonna sono i due trend polinomiali.
+
+```{r}
+x <- fmri.design(hrf, order=2) 
+dim(x)
+x[1:10,1:4]
+image(t(x[,1]))
+```
+
+Mediante 'fmri.lm()' generiamo un modello lineare con i dati fMRI contenuti in 'ds'. 
+Con il pacchetto 'fmri' assumiamo un'autocorrelazione temporale che segue un modello auto-regressivo di ordine 1, come riportato nel summary.
+
+```{r, include=TRUE}
+spm <- fmri.lm(ds, x)
+summary(spm)
+```
+
+
+Ora è desiderabile combinare l'"adaptive smoothing" e la rilevazione del segnale in modo tale da risolvere il problema del confronto multiplo.  Il metodo riultante è chiamato "segmentazione adattativa strutturale".  Questo metodo porta a risultati di rilevamento del segnale simili, ma è concettualmente più coerente e richiede meno ipotesi relative al rilevamento del segnale. Esso fornisce anche un algoritmo più efficiente dal punto di vista computazionale.
+La funzione che ci assiste in questa fase è 'fmri.smooth()', che contiene i seguenti argomenti:
+
+- spm: un oggetto di classe 'fmrispm' (il modello precedentemente generato)
+- hmax: la larghezza di banda massima 
+- adaptation: il tipo di adattamento (nel nostro caso "segment")
+- aplha: il livello di significatività per il rilevamento del segnale (di default 0.05)
+
+
+```{r, include=TRUE}
+spm.seg <- fmri.smooth(spm, hmax = 1, adaptation = "none", alpha=0.05)
+summary(spm.seg)
+spm.seg[1]
+#escludere intercetta
+plot(spm,)
+```
+
+A questo punto, siamo pronti per visualizzare i risultati graficamente. Attraverso la funzione 'plot()', in cui il primo argomento è l'ultimo modello creato, il secondo l'immagine anatomica estratta all'inizio della procedura e il terzo è il numero della slice appartenente alla terza dimensione che si vuole visualizzare, costruiamo un'immagine bidimensionale del cervello. Le aree attivate risultano colorate diversamente, in base alla differente intensità del segnale.
+
+```{r, include=TRUE}
+plot(spm, anatomic, slice=33)
+plot(spm.seg, anatomic, slice=34)
+plot(spm.seg, anatomic, slice=35)
+plot(spm.seg, anatomic, slice=36)
+image(spm[1])
+
+```
+
+Di seguito, propongo un metodo che permette di arrivare ad ottenere una t-statistic e un p-value per ogni voxel.
+
+All'inizio, creiamo una matrice denominata 'dataMatrix' di dimensioni 96x64436 (numero di scan x numero di voxel) in cui ogni colonna rappresenta la serie storica di ogni singolo voxel.
+
+
+```{r, include=TRUE}
+ttt=extract.data(ds)
+mask=ds$mask
+dataMatrix=NULL
+noScans=ds$dim[4]
+for(t in 1:noScans) {
+scan=ttt[,,,t]
+dataMatrix=rbind(dataMatrix, scan[mask])
+}
+dim(dataMatrix)
+```
+
+In seguito applichiamo la funzione lm a ogni singolo voxel ed estraiamo coefficienti e p-value.
+
+```{r, include=T}
+lms=apply(dataMatrix, 2, function(y) lm(y~x))
+# obtain the summary statistics for each voxel
+summaries=lapply(lms, summary)
+# Coefficients
+coefs=lapply(summaries, function(x) x$coefficients)
+# Intercept map
+int_vals=sapply(coefs, function(x) x["(Intercept)", ])
+int_est=int_vals["Estimate",]
+int_pvals=int_vals['Pr(>|t|)',]
+# Slope map
+beta_vals=sapply( coefs, function(x) x[2,])
+beta_est=beta_vals["Estimate",]
+beta_pvals=beta_vals["Pr(>|t|)",]
+```
+
+Questo è il risultato che otteniamo per un voxel:
+
+```{r, include=TRUE}
+summaries[345]
+```
+
+Ricordiamoci che la seconda variabile era l'intercetta, che nel modello viene però automaticamente inserita, perciò ora la seconda covariata viene esclusa dal modello.
