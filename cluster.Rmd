@@ -1,0 +1,189 @@
+---
+title: "Ckustering"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, include=TRUE}
+library(AnalyzeFMRI)
+mask = f.read.volume("C:/Users/symo9/Desktop/stage interno/spm99u-rfx/mask.hdr")
+# center 27 38 18
+info=list(xlim=c(-80,80),
+          ylim=c(-112,76),
+          zlim=c(-68,88))
+#occhio al flip del segno in x (sx dx)
+xcoords=-seq(info$xlim[1],info$xlim[2],by = 4)
+ycoords=seq(info$ylim[1],info$ylim[2],by = 4)
+zcoords=seq(info$zlim[1],info$zlim[2],by = 4)
+
+coord=which(mask[,,,1] !=0, arr.ind = TRUE)
+x = coord[,1]
+y = coord[,2]
+z = coord[,3]
+
+# uguale a coord ma con coordinate della mappa fmri
+coord_fmri=cbind(xcoords[coord[,1]],ycoords[coord[,2]],zcoords[coord[,3]])
+### ora le trasformo nelle coordinate dello spazio 3D
+x=xcoords[x]
+y=ycoords[y]
+z=zcoords[z]
+
+# info$xlim%*%c(-1,1)/4 # 40
+# info$ylim%*%c(-1,1)/4 # 47
+# info$zlim%*%c(-1,1)/4 # 39
+spmT = f.read.volume("C:/Users/symo9/Desktop/stage interno/spm99u-rfx/spmT_0002.img")
+
+traw = unlist(spmT[mask==1])
+praw = pt(traw,11,lower.tail = FALSE)
+m <- length(praw)
+
+
+
+```
+
+
+
+
+```{r, include=TRUE}
+nmat <- expand.grid(-1:1, -1:1, -1:1)
+nmat <- nmat[-c(1,3,7,9,14,19,21,25,27), ]
+spmT = f.read.volume("C:/Users/symo9/Desktop/stage interno/spm99u-rfx/spmT_0002.img")
+clusters=cluster.threshold(x=spmT[,,,1], nmat=nmat, level.thr=sqrt(94.7), size.thr = 0 )
+clusters= clusters[mask==1]==1
+dd = dist(coord[clusters,])
+hc = hclust(dd, "single")
+plot(hc)
+ct = cutree(hc,k=17)
+library(pander)
+pander(table(ct))
+
+```
+
+Ho ottenuto gli stessi risultati di SPM, ora provo a vedere se ottengo gli stessi risultati con i miei dati.
+
+```{r, include=TRUE}
+nmat <- expand.grid(-1:1, -1:1, -1:1)
+nmat <- nmat[-c(1,3,7,9,14,19,21,25,27), ]
+clusters=cluster.threshold(x=outputImage, nmat=nmat, level.thr=sqrt(94.7), size.thr = 0 )
+clusters= clusters[mask==1]==1
+dd = dist(coord[clusters,])
+hc = hclust(dd, "single")
+plot(hc)
+ct = cutree(hc,k=17)
+library(pander)
+pander(table(ct))
+
+```
+
+Ottengo gli stessi risultati.
+
+
+
+
+
+
+
+```{r,include=TRUE}
+nmat <- expand.grid(-1:1, -1:1, -1:1)
+nmat <- nmat[-c(1,3,7,9,14,19,21,25,27), ]
+clusters=cluster.threshold(x=outputImage, nmat=nmat, level.thr=sqrt(94.7), size.thr = 5 )
+clusters= clusters[mask==1]==1
+dd = dist(coord[clusters,])
+hc = hclust(dd, "single")
+plot(hc)
+ct = cutree(hc,k=11)
+library(pander)
+pander(table(ct))
+
+```
+
+
+
+
+
+```{r, include=TRUE}
+require(MASS)
+cols = c("lightgrey", rainbow(11))
+cexs= c(1,1)
+pchs = c(0,1)
+
+clusters2 = clusters
+clusters2[clusters] = ct
+#fwer
+# pdf("clusters_randomfields.pdf",width = 10)
+Z=as.factor(z)
+coplot( x ~ y | Z,  col=cols[clusters2+1],  show.given=F,pch=20)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r, include=TRUE}
+pfdr <- p.adjust(praw,"BH")
+require(cherry)
+hF<-hommelFast(praw)
+pfwer <- hF@adjusted
+
+# pickSimes(hF, alpha=0.05, select=which(clusters2==1))
+# pickSimes(hF, alpha=0.05, select=which(clusters2==2))
+# pickSimes(hF, alpha=0.05, select=which(clusters2==3))
+# pickSimes(hF, alpha=0.05, select=which(clusters2==4))
+# pickSimes(hF, alpha=0.05, select=which(clusters2==5))
+# 
+# pickSimes(hF, alpha=0.5, select=which(clusters2==1))
+# pickSimes(hF, alpha=0.5, select=which(clusters2==2))
+# pickSimes(hF, alpha=0.5, select=which(clusters2==3))
+# pickSimes(hF, alpha=0.5, select=which(clusters2==4))
+# pickSimes(hF, alpha=0.5, select=which(clusters2==5))
+# 
+############# funzioni di summary per un dato cluster
+get_summary_volumes <- function(id_selected){
+  Total=length(id_selected)
+  pos_max=id_selected[which.max(traw[id_selected])]
+  maxt=max(traw[id_selected])
+  temp_pos=coord_fmri[pos_max,]
+  list(x=temp_pos[1],y=temp_pos[2],z=temp_pos[3],
+       maxT=maxt,Total=Total)
+}
+
+get_summary_pickSimes_alpha <- function(id_selected,alpha=0.05){
+  Total=length(id_selected)
+  False_Null=pickSimes(hF, alpha=alpha, select=id_selected,silent = TRUE)
+  True_Null=Total-False_Null
+  Active_Proportion= False_Null/Total
+  list(alpha=alpha,False_Null=False_Null,True_Null=True_Null,Active_Proportion=Active_Proportion)
+}
+
+get_summary_pickSimes <- function(id_selected){
+  out=c(get_summary_volumes(id_selected ),
+  MeEst=get_summary_pickSimes_alpha(id_selected ,0.5),
+  CI95=get_summary_pickSimes_alpha(id_selected ,0.05))
+  
+  data.frame(out)
+}
+
+res=lapply(unique(clusters2)[-1], function(i) get_summary_pickSimes(id_selected=which( clusters2==i)) )
+
+out=res[[1]]
+for(i in 2:length(res)) out=rbind(out,res[[i]])
+
+pander(out)
+
+```
+
