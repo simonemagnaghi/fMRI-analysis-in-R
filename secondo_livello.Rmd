@@ -1,0 +1,138 @@
+---
+title: "SECOND-LEVEL ANALYSIS"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T)
+```
+
+In questa fase utilizzerò 12 immagini di contrasto (una per ogni soggetto) per una risposta emodinamica funzionale canonica. Queste immagini derivano da un modello di primo livello in cui gli event sono stati modellati con 3 funzioni di base. Perciò, queste 12 immagini di contrasto sono state prodotte da 12 diversi modelli di primo livello, uno per ogni soggetto.
+
+Importo le 12 immagini in R e dal summary si possono ricavare informazioni riguardanti il numero di slice utilizzate per ogni dimensioni, il numero di soggetti e le dimensioni di ogni singolo voxel.
+
+```{r, include=FALSE}
+library(AnalyzeFMRI)
+library(fmri)
+
+```
+
+
+```{r,include=TRUE}
+ds=read.ANALYZE('C:/Users/symo9/Desktop/stage interno/face_rfx/face_rfx/cons_can/con_0',TRUE,'',6,12)
+summary(ds)
+mat=fmri.design(extract.data(ds),order=0)
+```
+
+Ora considero una semplice forma della "random effect analysis". Prendo i contrasti di ogni soggetto e testo se la loro media è diversa da 0.
+
+Per iniziare creo una "mask" contenente i cosiddetti "non-background voxels":
+
+```{r, include=TRUE}
+files=dir('C:/Users/symo9/Desktop/stage interno/face_rfx/face_rfx/cons_can', pattern = '.hdr', full.names = TRUE)
+imageDim = f.read.analyze.header(files[1])$dim[2: 4]
+mask3D = array(1, imageDim)
+for (file in files) {
+  img =f.read.analyze.volume(file)[,,,1]
+  mask3D = mask3D*(!is.na(img))
+}
+# the mask is a list of indices
+mask2= which(mask3D == 1)
+length(mask2)
+```
+
+Dei 153594 voxel di partenza, ora ne consideriamo 51560.
+In seguito, costruisco una matrice che chiamo "dataMatrix" avente un numero di righe pari al numero di soggetti e tante colonne quanti sono i "non-background voxels" della "mask" creata in precedenza.
+
+```{r, include=TRUE}
+ttt = extract.data(ds)
+dataMatrix = NULL
+noSubj = ds$dim[4]
+for(t in 1:noSubj) {
+scan = ttt[,,,t]
+dataMatrix = rbind(dataMatrix, scan[mask2])
+}
+dim(dataMatrix)
+dataMatrix[1:12,43444:43448]
+```
+
+Ora posso applicare il T-test (a media 0) grazie alla funzione t.test() ad ogni colonna della dataMatrix.
+
+```{r, include=TRUE}
+ttest.out = apply(dataMatrix, 2,
+                   function(x) {
+                     temp = t.test(x)
+                     c(temp$statistic, temp$p.value)})
+# label the rows
+rownames(ttest.out) = c('statistic', 'pvalue')
+
+```
+
+Vediamo i risultati per le 5 colonne considerate in precedenza:
+
+```{r, include=TRUE}
+dataMatrix[1:12,43444:43448]
+#T-test
+ttest.out[1:2,43444:43448]
+```
+
+
+La figura seguente mostra l'istogramma dei p-value:
+
+```{r, include=TRUE}
+plot(density.default(x=as.vector(ttest.out[2,])), main='P-value histogram')
+hist(x=as.vector(ttest.out[2,]),55, main='histogram of p-values', xlab='p-values')
+
+```
+
+
+Si nota la presenza di un grande numero di p-value vicini allo 0, perciò significativi.
+
+In seguito, facciamo un threshold delle statistiche T, utilizzando il false discovery rate (FDR).
+
+```{r, include=T}
+Threshold = Threshold.FDR(ttest.out[1,],
+                           q =.05,
+                           cV.type = 2,
+                           type = 't',
+                           df1 = noSubj - 1)
+pp=Threshold.Bonferroni(0.05,n=length(ttest.out[1,]),type=c('t'),df1=11)
+Threshold
+toSave = ttest.out[1,] > Threshold
+mean(toSave)
+toSave2 = ttest.out[1,] > pp
+mean(toSave2)
+```
+
+Solo il 15.86% dei "non-background voxels" hanno una statistica T maggiore della soglia.
+
+Considerando per la terza dimensione la slice numero 26 e plottando i valori dell'immagine iniziale e di quella a cui sono arrivato ora otteniamo due risultati differenti, in cui si può notare una drastica riduzione dei contrasti presi in considerazione.
+
+```{r, include=TRUE}
+ana=extract.data(ds)[, , , 1]
+files=dir('C:/Users/symo9/Desktop/stage interno/face_rfx/face_rfx/cons_can', pattern = '.hdr', full.names = TRUE)
+imageDim = f.read.analyze.header(files[1])$dim[2: 4]
+outputImage = array(0, imageDim)
+```
+
+```{r}
+toSave = ttest.out[1,] >= Threshold | ttest.out[1,] <= -Threshold
+outputImage[mask2[toSave]] = ttest.out[1, toSave]
+toSave2 = ttest.out[1,] >= pp | ttest.out[1,] <= -pp
+outputImage[mask2[toSave2]] = ttest.out[1, toSave2]
+```
+
+
+
+
+```{r, include=TRUE}
+ana=extract.data(ds)[,,,1]
+library(neurobase)
+ortho2(x=ana,y=outputImage)
+```
+
+
+
